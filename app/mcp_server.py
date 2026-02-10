@@ -32,7 +32,7 @@ from mcp.types import (
 from .db import init_db
 from . import repository as repo
 
-server = Server("SampleMCPServer", "2.0.0", "MCP server exposing Indian e-commerce customer/order/complaint data, analytics and RCA tools.")
+server = Server("extractContext", "2.0.0", "MCP server exposing Indian e-commerce customer/order/complaint data, analytics and RCA tools.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

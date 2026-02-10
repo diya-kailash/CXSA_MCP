@@ -2,3 +2,4 @@ fastapi
 uvicorn
 mcp
 starlette
+google-genai

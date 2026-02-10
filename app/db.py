@@ -194,9 +194,9 @@ def _seed_if_empty(conn: sqlite3.Connection, seed: dict) -> None:
     users = seed["users"]
     conn.executemany(
         "INSERT INTO users"
-        " (name, email, phone, address_line, city, state, zip_code, country,"
+        " (id, name, email, phone, address_line, city, state, zip_code, country,"
         "  created_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
         users,
     )
     log.info("Seeded %d users.", len(users))
@@ -204,9 +204,9 @@ def _seed_if_empty(conn: sqlite3.Connection, seed: dict) -> None:
     orders = seed["orders"]
     conn.executemany(
         "INSERT INTO orders"
-        " (user_id, item, quantity, unit_price, total_amount, status,"
+        " (id, user_id, item, quantity, unit_price, total_amount, status,"
         "  payment_method, shipping_address, tracking_number, ordered_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         orders,
     )
     log.info("Seeded %d orders.", len(orders))
@@ -214,9 +214,9 @@ def _seed_if_empty(conn: sqlite3.Connection, seed: dict) -> None:
     complaints = seed["complaints"]
     conn.executemany(
         "INSERT INTO complaints"
-        " (user_id, order_id, category, priority, status, subject, details,"
+        " (id, user_id, order_id, category, priority, status, subject, details,"
         "  resolution, assigned_to, created_at, resolved_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         complaints,
     )
     log.info("Seeded %d complaints.", len(complaints))
@@ -230,9 +230,9 @@ def _seed_logs_if_empty(conn: sqlite3.Connection, seed: dict) -> None:
     payments = seed["payment_logs"]
     conn.executemany(
         "INSERT INTO payment_logs"
-        " (order_id, transaction_id, event_type, amount, currency, gateway,"
+        " (id, order_id, transaction_id, event_type, amount, currency, gateway,"
         "  status, error_message, logged_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
         payments,
     )
     log.info("Seeded %d payment logs.", len(payments))
@@ -240,9 +240,9 @@ def _seed_logs_if_empty(conn: sqlite3.Connection, seed: dict) -> None:
     logistics = seed["logistics_logs"]
     conn.executemany(
         "INSERT INTO logistics_logs"
-        " (order_id, tracking_number, carrier, event_type, location, notes,"
+        " (id, order_id, tracking_number, carrier, event_type, location, notes,"
         "  logged_at)"
-        " VALUES (?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?)",
         logistics,
     )
     log.info("Seeded %d logistics logs.", len(logistics))
