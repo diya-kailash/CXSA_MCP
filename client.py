@@ -1,15 +1,12 @@
 """Gemini-based MCP Client – Cross System Correlation Agent.
 
-This client connects to the MCP server via stdio, discovers all available
-tools, and uses Google Gemini to act as Agent 2 (Cross System Correlation
-Agent) in the complaint resolution pipeline.  It gathers context from the
-MCP server tools and assembles a complete context package.
+This client connects to a remote MCP server via Streamable HTTP, discovers
+all available tools, and uses Google Gemini to act as Agent 2 (Cross System
+Correlation Agent) in the complaint resolution pipeline.  It gathers
+context from the MCP server tools and assembles a complete context package.
 
 Usage:
-    # Set your Gemini API key first
-    export GEMINI_API_KEY="your-key-here"
-
-    # Run with a sample complaint
+    # Set your Gemini API key in .env or as env var
     python client.py
 
     # Or pass a custom complaint
@@ -24,10 +21,13 @@ import os
 import sys
 from typing import Any
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from google import genai
 from google.genai import types as genai_types
 from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Configuration
@@ -35,8 +35,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
-MCP_SERVER_CMD = sys.executable  # current Python interpreter
-MCP_SERVER_ARGS = ["-m", "app.mcp_server"]
+MCP_SERVER_URL = "https://r28p3c7r-8001.inc1.devtunnels.ms/mcp/"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # System Prompt – Cross System Correlation Agent
@@ -142,22 +141,18 @@ def mcp_tool_to_gemini_declaration(tool) -> dict[str, Any]:
 async def run_agent(user_complaint: str) -> str:
     """Connect to the MCP server, discover tools, and run the Gemini agent loop."""
 
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("ERROR: Set GEMINI_API_KEY environment variable first.")
+        print("ERROR: Set GOOGLE_API_KEY in .env file or as environment variable.")
         sys.exit(1)
 
     client = genai.Client(api_key=api_key)
 
-    # ── Connect to MCP server via stdio ───────────────────────────────────
-    server_params = StdioServerParameters(
-        command=MCP_SERVER_CMD,
-        args=MCP_SERVER_ARGS,
-    )
-
-    print("🔌 Connecting to MCP server...")
-    async with stdio_client(server_params) as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream) as session:
+    print(f"🔌 Connecting to MCP server at {MCP_SERVER_URL}...")
+    import httpx
+    http_client = httpx.AsyncClient(verify=False, follow_redirects=True, timeout=httpx.Timeout(120.0))
+    async with streamable_http_client(MCP_SERVER_URL, http_client=http_client) as (read_stream, write_stream, _):
+      async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             print("✅ MCP session initialised")
 
@@ -205,6 +200,13 @@ async def run_agent(user_complaint: str) -> str:
                 iteration += 1
                 print(f"\n--- Agent iteration {iteration} ---")
 
+                # Rate-limit: pause before each LLM call
+                if iteration > 1:
+                    print("  ⏳ Waiting 3 seconds before next LLM call...")
+                    await asyncio.sleep(3)
+                else:
+                    await asyncio.sleep(1)
+
                 response = client.models.generate_content(
                     model=GEMINI_MODEL,
                     contents=messages,
@@ -245,22 +247,42 @@ async def run_agent(user_complaint: str) -> str:
 
                     print(f"  🔧 Calling tool: {fn_name}({json.dumps(fn_args, default=str)})")
 
-                    try:
-                        result = await session.call_tool(fn_name, fn_args)
-                        result_text = ""
-                        for content_item in result.content:
-                            if hasattr(content_item, "text"):
-                                result_text += content_item.text
+                    # Retry logic for dev tunnel timeouts / transient errors
+                    result_text = ""
+                    for attempt in range(3):
+                        try:
+                            if attempt > 0:
+                                wait = 2 * attempt
+                                print(f"    🔄 Retry {attempt}/2 in {wait}s...")
+                                await asyncio.sleep(wait)
+                            result = await session.call_tool(fn_name, fn_args)
+                            result_text = ""
+                            for content_item in result.content:
+                                if hasattr(content_item, "text"):
+                                    result_text += content_item.text
 
-                        # Truncate very large results for Gemini context
-                        if len(result_text) > 30000:
-                            result_text = result_text[:30000] + "\n... [truncated]"
+                            # Truncate very large results for Gemini context
+                            if len(result_text) > 30000:
+                                result_text = result_text[:30000] + "\n... [truncated]"
 
-                        print(f"    ✅ Got {len(result_text)} chars of data")
+                            print(f"    ✅ Got {len(result_text)} chars of data")
+                            break  # success
+                        except Exception as e:
+                            if attempt == 2:
+                                result_text = json.dumps({"error": str(e)})
+                                print(f"    ❌ Error (final): {e}")
+                            else:
+                                print(f"    ⚠️  Attempt {attempt+1} failed: {e}")
 
-                    except Exception as e:
-                        result_text = json.dumps({"error": str(e)})
-                        print(f"    ❌ Error: {e}")
+                    function_response_parts.append(
+                        genai_types.Part.from_function_response(
+                            name=fn_name,
+                            response={"result": result_text},
+                        )
+                    )
+
+                    # Small delay between tool calls to avoid overwhelming dev tunnel
+                    await asyncio.sleep(1)
 
                     function_response_parts.append(
                         genai_types.Part.from_function_response(
@@ -285,12 +307,7 @@ async def run_agent(user_complaint: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 DEFAULT_COMPLAINT = (
-    "Hi, I'm Rajesh Kumar (customer ID 5). I placed order #15 last week "
-    "and paid via UPI. The tracking number is TRK100015. The order status "
-    "shows shipped but it's been days and I haven't received anything. "
-    "I checked and it seems stuck somewhere. Also, I noticed a complaint "
-    "was already filed but nobody responded. This is really frustrating. "
-    "Can someone please look into this urgently?"
+    "customer with id 6 reported that order with id 17 has been delivered incorectly. fetch all the details about the customer"
 )
 
 
